@@ -155,6 +155,29 @@ class TestFastAPIChatEndpoint(unittest.TestCase):
         self.assertIsNotNone(sql2)
         self.assertTrue("Los Angeles" in sql2 or "City" in sql2)
 
+    def test_chat_ambiguous_query_asks_clarification(self):
+        thread_id = "test-ambiguous-clarification"
+        # Turn 1: Ambiguous prompt without defined metric (e.g. "best employee")
+        r1 = self.client.post(
+            "/api/chat",
+            json={"message": "Show me the best employee", "thread_id": thread_id}
+        )
+        self.assertEqual(r1.status_code, 200)
+        data1 = r1.json()
+        self.assertIsNotNone(data1.get("clarification"), "Agent should ask for clarification on ambiguous prompts")
+        self.assertIsNone(data1.get("sql"), "Agent should not generate an arbitrary SQL query when ambiguous")
+
+        # Turn 2: User responds to clarification with concrete criterion
+        r2 = self.client.post(
+            "/api/chat",
+            json={"message": "Highest salary", "thread_id": thread_id}
+        )
+        self.assertEqual(r2.status_code, 200)
+        data2 = r2.json()
+        self.assertIsNotNone(data2.get("sql"), "Agent should generate SQL once clarification is provided")
+        self.assertIn("Employees", data2.get("sql"))
+        self.assertIn("Salary", data2.get("sql"))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

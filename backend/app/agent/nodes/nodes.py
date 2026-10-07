@@ -1,4 +1,5 @@
 import json
+import re
 import sqlglot
 from langchain_core.messages import AIMessage, SystemMessage, HumanMessage
 from app.agent.state import AgentState
@@ -77,7 +78,9 @@ Return valid JSON with the single boolean field 'is_in_scope'.
             elif isinstance(m, AIMessage):
                 try:
                     parsed = json.loads(m.content)
-                    if parsed.get("sql"):
+                    if parsed.get("clarification"):
+                        history_lines.append(f"Assistant Clarification Question: {parsed['clarification']}")
+                    elif parsed.get("sql"):
                         history_lines.append(f"Generated SQL: {parsed['sql']}")
                 except:
                     pass
@@ -85,7 +88,7 @@ Return valid JSON with the single boolean field 'is_in_scope'.
         conversation_context = "\n".join(history_lines) if history_lines else "None"
         latest_user_request = messages[-1].content if messages else ""
         
-        prompt = f"""You are a SQL query assistant for SQLite.
+        prompt = f"""You are a task-oriented SQL query assistant for SQLite.
 Database Schema:
 {schema}
 
@@ -95,25 +98,85 @@ Previous Conversation & Queries:
 Latest User Request:
 {latest_user_request}
 
-Rules:
-1. Generate the SQLite query corresponding to the user's latest request, taking previous queries into account if it is a follow-up filter/refinement.
+Instructions:
+1. Ambiguity Detection & Clarification Rules:
+   - Carefully check if the user's latest request is truly AMBIGUOUS, underspecified, subjective, or missing required criteria.
+   - Ambiguous queries include:
+     * Subjective superlatives without metrics: "Show the best employee", "Find great customers", "Top performers", "Longest employee"
+     * Completely ungrounded queries: "Show records", "Get data", "List everything" (entity or table unspecified)
+   - NOT AMBIGUOUS queries (Generate SQL directly, do NOT ask clarification):
+     * Queries with clear column filters, dates, aggregates, or standard business questions:
+       - "Show all employees hired after 2023" -> NOT ambiguous (HireDate > '2023-12-31')
+       - "List customers in California" -> NOT ambiguous (State = 'California')
+       - "Average salary by department" -> NOT ambiguous (AVG(Salary) GROUP BY DepartmentID)
+       - "Highest paid employee" -> NOT ambiguous (ORDER BY Salary DESC LIMIT 1)
+       - "Count of employees" -> NOT ambiguous (COUNT(*))
+   - If AMBIGUOUS and not resolved by previous conversation:
+     * Set `is_ambiguous` = True.
+     * In `clarification_question`, write a polite question offering concrete options based on schema columns (e.g. asking whether they mean salary, hire date, etc.).
+     * Set `sql_query` = "".
+   - If NOT AMBIGUOUS:
+     * Set `is_ambiguous` = False.
+     * Leave `clarification_question` null.
+     * In `sql_query`, write the executable SQLite SELECT query.
 2. Even if the user asks for a modification or destructive command (such as DROP, DELETE, INSERT, UPDATE, ALTER), output that exact SQL statement directly so our downstream security validator can evaluate it. Do NOT refuse or apologize.
 3. NEVER hallucinate or invent tables or columns that do not exist in the provided schema. Only use tables: Departments, Employees, Customers and their exact columns.
 4. If there were previous syntax errors or schema validation errors with your SQL, fix them. Previous errors: {errors}
 """
         try:
             result = self.llm_service.generate_structured_output([HumanMessage(content=prompt)], SQLGeneration)
-            sql_query = result.sql_query
+            if result.is_ambiguous and result.clarification_question:
+                return {
+                    "is_ambiguous": True,
+                    "clarification_message": result.clarification_question,
+                    "sql_query": ""
+                }
+            sql_query = result.sql_query or ""
         except Exception as e:
-            # If the LLM refused because of safety alignment, fall back to the raw request so validate_sql catches it
+            print(f"[generate_sql Error]: {e}")
             user_text = messages[-1].content.strip() if messages else ""
-            sql_query = user_text
+            sql_keywords = {"drop", "delete", "insert", "update", "alter", "truncate", "create"}
+            words = set(re.findall(r'\b[a-zA-Z]+\b', user_text.lower()))
+            if words.intersection(sql_keywords):
+                sql_query = user_text
+            else:
+                return {
+                    "is_ambiguous": False,
+                    "clarification_message": None,
+                    "sql_query": "",
+                    "is_valid_sql": False,
+                    "sql_errors": f"Language Model Service Error: {str(e)}",
+                    "sql_generation_attempts": 3
+                }
         
         attempts = state.get("sql_generation_attempts", 0) + 1
-        return {"sql_query": sql_query, "sql_generation_attempts": attempts}
+        return {
+            "is_ambiguous": False,
+            "clarification_message": None,
+            "sql_query": sql_query, 
+            "sql_generation_attempts": attempts
+        }
+
+    def ask_clarification(self, state: AgentState):
+        question = state.get("clarification_message") or "Could you please clarify your request?"
+        msg = AIMessage(content=json.dumps({
+            "clarification": question,
+            "explanation": question
+        }))
+        return {"messages": [msg]}
 
     def validate_sql(self, state: AgentState):
+        if state.get("sql_errors"):
+            return {
+                "is_valid_sql": False,
+                "sql_errors": state.get("sql_errors")
+            }
         query = state.get("sql_query", "")
+        if not query or not query.strip():
+            return {
+                "is_valid_sql": False,
+                "sql_errors": "No SQL query could be generated for this request."
+            }
         try:
             parsed = sqlglot.parse(query)
             if not parsed or parsed[0] is None:

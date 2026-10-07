@@ -100,10 +100,12 @@ function App() {
   const selectQuery = (id) => {
     setSelectedQueryId(id);
     setActiveError(null);
+    setActiveClarification(null);
   };
 
   const [displayedExplanation, setDisplayedExplanation] = useState('');
   const [activeError, setActiveError] = useState(null);
+  const [activeClarification, setActiveClarification] = useState(null);
   const [isCopied, setIsCopied] = useState(false);
   const [threadId, setThreadId] = useState(uuidv4());
 
@@ -278,6 +280,7 @@ function App() {
     setQueriesList([]);
     setSelectedQueryId(null);
     setActiveError(null);
+    setActiveClarification(null);
   };
 
   const submitQuery = async (queryText) => {
@@ -305,7 +308,21 @@ function App() {
           { id: Date.now(), type: 'agent', error: true, content: data.error }
         ]);
         setActiveError(data.error);
+        setActiveClarification(null);
+      } else if (data.clarification) {
+        setMessages(prev => [
+          ...prev,
+          {
+            id: Date.now() + 1,
+            type: 'agent',
+            isClarification: true,
+            content: data.clarification
+          }
+        ]);
+        setActiveClarification(data.clarification);
+        setActiveError(null);
       } else {
+        setActiveClarification(null);
         const queryRecord = {
           id: Date.now(),
           userPrompt: queryText,
@@ -352,7 +369,7 @@ function App() {
     "Show all employees hired after 2023",
     "List customers in California",
     "Average salary by department",
-    "Highest paid employee",
+    "Show the best employee (Test Ambiguity)",
     "Drop table Customers (Test Guardrail)"
   ];
 
@@ -460,7 +477,7 @@ function App() {
                 className={`message-row ${msg.type === 'user' ? 'row-user' : 'row-agent'}`}
               >
                 <div className="avatar">
-                  {msg.type === 'user' ? '👤' : msg.error ? '⚠️' : '🤖'}
+                  {msg.type === 'user' ? '👤' : msg.error ? '⚠️' : msg.isClarification ? '💡' : '🤖'}
                 </div>
                 <div
                   className={`message-bubble ${
@@ -468,10 +485,22 @@ function App() {
                       ? 'bubble-user'
                       : msg.error
                       ? 'bubble-error'
+                      : msg.isClarification
+                      ? 'bubble-clarification'
                       : 'bubble-agent'
                   }`}
                 >
+                  {msg.isClarification && (
+                    <div className="clarification-header">
+                      <span className="clarification-badge">💡 Clarification Needed</span>
+                    </div>
+                  )}
                   <p>{msg.content}</p>
+                  {msg.isClarification && (
+                    <span className="clarification-hint">
+                      Reply below with your preference to generate the exact query.
+                    </span>
+                  )}
 
                   {/* Multi-turn Query Selector Card */}
                   {msg.queryId && (
@@ -610,7 +639,20 @@ function App() {
               </div>
             )}
 
-            {!activeSQL && !rawExplanation && !activeError ? (
+            {activeClarification && !activeSQL && (
+              <div className="alert-card alert-clarification">
+                <div className="alert-icon">💡</div>
+                <div className="alert-body">
+                  <h4>Ambiguity Detected — Clarification Requested</h4>
+                  <p>{activeClarification}</p>
+                  <span className="alert-hint">
+                    Type your clarification in the chat to generate and execute the targeted query.
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {!activeSQL && !rawExplanation && !activeError && !activeClarification ? (
               <div className="empty-inspector">
                 <div className="empty-icon">📊</div>
                 <h3>No Query Generated Yet</h3>

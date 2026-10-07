@@ -11,6 +11,7 @@ def create_agent_graph():
     workflow.add_node("reject_out_of_scope", nodes.reject_out_of_scope)
     workflow.add_node("retrieve_schema", nodes.retrieve_schema)
     workflow.add_node("generate_sql", nodes.generate_sql)
+    workflow.add_node("ask_clarification", nodes.ask_clarification)
     workflow.add_node("validate_sql", nodes.validate_sql)
     workflow.add_node("optimize_sql", nodes.optimize_sql)
     workflow.add_node("execute_query", nodes.execute_query)
@@ -35,13 +36,27 @@ def create_agent_graph():
 
     workflow.add_edge("reject_out_of_scope", END)
     workflow.add_edge("retrieve_schema", "generate_sql")
-    workflow.add_edge("generate_sql", "validate_sql")
+
+    def check_ambiguity(state: AgentState):
+        if state.get("is_ambiguous"):
+            return "ambiguous"
+        return "not_ambiguous"
+
+    workflow.add_conditional_edges(
+        "generate_sql",
+        check_ambiguity,
+        {
+            "ambiguous": "ask_clarification",
+            "not_ambiguous": "validate_sql"
+        }
+    )
+    workflow.add_edge("ask_clarification", END)
 
     def check_validity(state: AgentState):
         if state.get("is_valid_sql"):
             return "valid"
         err = str(state.get("sql_errors", ""))
-        if "Security Policy Violation" in err:
+        if "Security Policy Violation" in err or "Language Model Service Error" in err or "LLM" in err:
             return "invalid_max_retries"
         if state.get("sql_generation_attempts", 0) >= 3:
             return "invalid_max_retries"

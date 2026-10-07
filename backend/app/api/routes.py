@@ -60,6 +60,7 @@ async def chat_endpoint(request: ChatRequest):
                 explanation=parsed_content.get("explanation"),
                 results=parsed_content.get("results"),
                 error=parsed_content.get("error"),
+                clarification=parsed_content.get("clarification"),
                 execution_time_ms=parsed_content.get("execution_time_ms")
             )
         except json.JSONDecodeError:
