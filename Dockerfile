@@ -1,6 +1,6 @@
 # Multi-stage build: Builds the React frontend and packages the FastAPI backend
 # Stage 1: Build the React Frontend
-FROM node:18-alpine AS frontend-builder
+FROM node:22-alpine AS frontend-builder
 WORKDIR /app/frontend
 
 COPY frontend/package*.json ./
