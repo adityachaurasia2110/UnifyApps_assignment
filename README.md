@@ -27,7 +27,7 @@ graph TD
         end
         
         DB[(SQLite Sample DB)]
-        LLM[Google Gemini LLM]
+        LLM[Groq LPU (GPT-OSS-120B)]
     end
 
     UI -->|Natural Language| API
@@ -66,28 +66,43 @@ The AI Agent is orchestrated using **LangGraph**, providing a cyclic graph capab
 
 ## 3. Setup Instructions
 
-### Prerequisites
+### Option A: Dockerized Deployment (Recommended)
+You can build and run both the FastAPI backend and React frontend with a single command:
+
+```bash
+# 1. Set your Groq API key in backend/.env
+echo "GROQ_API_KEY=your_groq_api_key_here" > backend/.env
+
+# 2. Build and launch all containers
+docker compose up --build
+```
+* **Frontend UI**: `http://localhost:3000` (served with Nginx reverse proxy)
+* **Backend API**: `http://localhost:8000`
+
+---
+
+### Option B: Local Manual Setup
+
+#### Prerequisites
 - Python 3.10+
 - Node.js 18+
-- A Google Gemini API Key (`GOOGLE_API_KEY`)
+- Groq API Key (`GROQ_API_KEY`)
 
-### Backend Setup
+#### Backend Setup
 ```bash
 cd backend
 python3 -m venv venv
 source venv/bin/activate
-pip install -r requirements.txt # (or just install dependencies listed below)
-# Dependencies: fastapi uvicorn langchain langgraph langchain-google-genai pydantic sqlalchemy sqlglot
-export GOOGLE_API_KEY="your-api-key"
+pip install -r requirements.txt
 
-# Initialize sample database (creates sample.db)
-python scripts/init_db.py
+# Create .env file with your GROQ_API_KEY
+echo "GROQ_API_KEY=your_key_here" > .env
 
 # Run the server
 uvicorn app.main:app --reload --port 8000
 ```
 
-### Frontend Setup
+#### Frontend Setup
 ```bash
 cd frontend
 npm install
@@ -95,7 +110,30 @@ npm run dev
 ```
 Open `http://localhost:5173` in your browser.
 
-## 4. Prompts Used
+---
+
+## 4. Unit and Integration Tests
+
+A comprehensive test suite covering all functional criteria, security guardrails, and API endpoints is provided in `backend/test_suite.py`:
+
+```bash
+cd backend
+python test_suite.py
+```
+
+### What is tested:
+1. **`TestDatabaseService`**: SQLite connection, schema introspection (`Employees`, `Departments`, `Customers`), read queries, and exception handling.
+2. **`TestSQLValidationAndSecurity`**:
+   - Read-only AST validation (only `SELECT` queries allowed).
+   - Destructive operations blocked (`DROP`, `DELETE`, `UPDATE`, `ALTER`, `TRUNCATE`).
+   - Stacked SQL injection defense (`SELECT ...; DROP TABLE ...;--`).
+   - Anti-hallucination verification via SQLite `EXPLAIN` (rejects non-existent tables/columns).
+3. **`TestLangGraphAgentWorkflow`**: In-scope query translation and out-of-scope intent refusal.
+4. **`TestFastAPIChatEndpoint`**: Full HTTP integration on `/api/chat` with multi-turn conversation context retention.
+
+---
+
+## 5. Prompts Used
 1. **Intent Detection:**
    *"Analyze the user's request and the conversation history. Determine if the request is related to querying a database, SQL, or retrieving data about employees, departments, or customers. If it is about sports, politics, general knowledge, or creative writing, it is OUT OF SCOPE."*
 2. **SQL Generation:**
@@ -103,7 +141,16 @@ Open `http://localhost:5173` in your browser.
 3. **Explanation Generation:**
    *"Explain the following SQL query in plain, clear English. Focus on what data it retrieves."*
 
-## 5. Bonus Features Implemented
-- **SQL Execution**: Executes read-only queries against a sample SQLite database.
-- **Dynamic Frontend**: Modern UI with glassmorphism, animations, and dark mode support.
-- **SOLID Architecture**: Clean code on the backend using Dependency Injection (LLM Service, DB Service).
+---
+
+## 6. Bonus Features Implemented
+* 🐳 **Dockerized Deployment**: Complete multi-stage `Dockerfile` and `docker-compose.yml` for zero-configuration startup.
+* 🧪 **Unit and Integration Tests**: 13 comprehensive unit, integration, and security tests in `test_suite.py`.
+* 🛡️ **Multi-layer SQL & Prompt Injection Protection**: SQLGlot AST validation + destructive keyword blocklist + pre-flight SQLite `EXPLAIN` anti-hallucination.
+* ⚡ **Query Execution & Latency Profiling**: High-precision monotonic execution timing (`time.perf_counter()`) measuring database latency in milliseconds.
+* 🔄 **Flexible Layout & Query Selector**:
+  - Horizontal drag-to-resize split pane with layout presets (`💬 Chat Focus`, `⚖️ 50/50`, `📊 Query Focus`).
+  - Multi-turn query selector allowing users to inspect and navigate between any query in the session.
+* 💾 **Data Export**: One-click download of generated query (`.sql`) and live results in both **CSV** and **JSON** formats.
+* 🌙 **Dark Mode**: Persistent dark/light theme switchable via top navbar.
+* ⚡ **Groq LPU Acceleration**: Powered by `openai/gpt-oss-120b` for ultra-fast, quota-resilient inference.
