@@ -23,8 +23,15 @@ app.include_router(router, prefix="/api")
 import os
 from fastapi.staticfiles import StaticFiles
 
-dist_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "dist"))
-if os.path.exists(dist_dir):
+candidate_dirs = [
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "dist")),
+    os.path.abspath("/frontend/dist"),
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "dist")),
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "dist")),
+]
+dist_dir = next((d for d in candidate_dirs if os.path.exists(d)), None)
+
+if dist_dir:
     app.mount("/", StaticFiles(directory=dist_dir, html=True), name="static")
 else:
     @app.get("/")

@@ -293,7 +293,7 @@ function App() {
     setActiveError(null);
 
     try {
-      const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+      const apiBase = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:8000' : '');
       const response = await fetch(`${apiBase}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -347,7 +347,7 @@ function App() {
         ]);
       }
     } catch {
-      const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+      const apiBase = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:8000' : '');
       const errMsg = `Error communicating with backend server (${apiBase}). Ensure the backend is running.`;
       setMessages(prev => [
         ...prev,
