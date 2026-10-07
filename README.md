@@ -6,28 +6,28 @@ A task-oriented AI agent that translates natural language into SQL queries using
 
 ```mermaid
 graph TD
-    subgraph Frontend [React Web App]
-        UI[Chat Interface]
-        SQL[SQL Output Panel]
-        Results[Query Results Table]
+    subgraph Frontend ["React Web App"]
+        UI["Chat Interface"]
+        SQL["SQL Output Panel"]
+        Results["Query Results Table"]
     end
 
-    subgraph Backend [FastAPI Server]
-        API[POST /api/chat]
-        Graph[LangGraph State Machine]
+    subgraph Backend ["FastAPI Server"]
+        API["POST /api/chat"]
+        Graph["LangGraph State Machine"]
         
-        subgraph Nodes
-            Intent[Intent Detection]
-            Schema[Schema Retrieval]
-            GenSQL[SQL Generation]
-            ValSQL[SQL Validation]
-            OptSQL[SQL Optimization]
-            Exec[Execute Query]
-            Explain[Generate Explanation]
+        subgraph Nodes ["Workflow Nodes"]
+            Intent["Intent Detection"]
+            Schema["Schema Retrieval"]
+            GenSQL["SQL Generation"]
+            ValSQL["SQL Validation"]
+            OptSQL["SQL Optimization"]
+            Exec["Execute Query"]
+            Explain["Generate Explanation"]
         end
         
-        DB[(SQLite Sample DB)]
-        LLM[Groq LPU (GPT-OSS-120B)]
+        DB[("SQLite Sample DB")]
+        LLM["Groq LPU (GPT-OSS-120B)"]
     end
 
     UI -->|Natural Language| API

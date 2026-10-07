@@ -20,6 +20,13 @@ app.add_middleware(
 
 app.include_router(router, prefix="/api")
 
-@app.get("/")
-def health_check():
-    return {"status": "ok"}
+import os
+from fastapi.staticfiles import StaticFiles
+
+dist_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "dist"))
+if os.path.exists(dist_dir):
+    app.mount("/", StaticFiles(directory=dist_dir, html=True), name="static")
+else:
+    @app.get("/")
+    def health_check():
+        return {"status": "ok", "message": "Backend running. Frontend build not found."}
