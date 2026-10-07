@@ -40,6 +40,9 @@ def create_agent_graph():
     def check_validity(state: AgentState):
         if state.get("is_valid_sql"):
             return "valid"
+        err = str(state.get("sql_errors", ""))
+        if "Security Policy Violation" in err:
+            return "invalid_max_retries"
         if state.get("sql_generation_attempts", 0) >= 3:
             return "invalid_max_retries"
         return "invalid"

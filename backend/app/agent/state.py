@@ -13,3 +13,4 @@ class AgentState(TypedDict):
     query_results: Optional[str]
     explanation: Optional[str]
     sql_generation_attempts: int
+    execution_time_ms: Optional[float]

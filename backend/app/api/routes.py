@@ -32,9 +32,22 @@ async def chat_endpoint(request: ChatRequest):
     state = {"messages": history + [HumanMessage(content=request.message)]}
     
     try:
-        result = agent_app.invoke(state)
+        # Use stream instead of invoke to print intermediate steps
+        final_state = state
+        print(f"\n--- Starting LangGraph Workflow for Thread: {thread_id} ---")
+        for step in agent_app.stream(state):
+            for node_name, node_state in step.items():
+                print(f"\n[Node Executed]: {node_name}")
+                if "sql_query" in node_state:
+                    print(f"  -> SQL Query: {node_state['sql_query']}")
+                if "is_valid_sql" in node_state:
+                    print(f"  -> Is Valid: {node_state['is_valid_sql']}")
+            final_state.update(step[node_name])
+            
+        print("--- Workflow Complete ---\n")
+        
         # The result messages contain the full updated list. The last one is the AIMessage.
-        ai_message = result["messages"][-1]
+        ai_message = final_state["messages"][-1]
         
         # We append both to our session
         sessions[thread_id].append(HumanMessage(content=request.message))
@@ -46,7 +59,8 @@ async def chat_endpoint(request: ChatRequest):
                 sql=parsed_content.get("sql"),
                 explanation=parsed_content.get("explanation"),
                 results=parsed_content.get("results"),
-                error=parsed_content.get("error")
+                error=parsed_content.get("error"),
+                execution_time_ms=parsed_content.get("execution_time_ms")
             )
         except json.JSONDecodeError:
             return ChatResponse(error="Failed to parse agent response.")
