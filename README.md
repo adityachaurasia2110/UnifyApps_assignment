@@ -71,6 +71,13 @@ The AI Agent is orchestrated using **LangGraph**, providing a cyclic state machi
 8. **`generate_explanation`**: Uses the LLM to formulate a plain-English, step-by-step breakdown.
 9. **`format_response`**: Assembles the complete response payload for the React frontend.
 
+### Real-Time Streaming & Server-Sent Events (SSE)
+* **Endpoint**: `POST /api/chat/stream`
+* **Real-time LangGraph Step Streaming**: Emits live node lifecycle events (`detect_intent`, `retrieve_schema`, `generate_sql`, `validate_sql`, `optimize_sql`, `execute_query`, `generate_explanation`) so the user sees exactly what the agent is thinking and doing in real time.
+* **Token Streaming**: Explanations and clarifications are streamed word-by-word with typewriter animation and live blinking cursor.
+* **Live AST Preview**: As soon as candidate SQL is drafted, it is displayed in the live execution card before validation and execution finish.
+* **Automatic Fallback**: Transparently falls back to `POST /api/chat` if the client environment does not support event streams.
+
 ## 3. High Availability & Multi-Model Fallback
 
 To prevent downtime and avoid quota exhaustion on Groq's free tier, the backend includes an automated multi-model fallback chain:

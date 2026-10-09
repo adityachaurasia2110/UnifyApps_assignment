@@ -68,6 +68,10 @@ function App() {
   ]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [streamingSteps, setStreamingSteps] = useState([]);
+  const [currentStep, setCurrentStep] = useState(null);
+  const [streamingText, setStreamingText] = useState('');
+  const [streamingSql, setStreamingSql] = useState('');
 
   // Theme State (Dark / Light)
   const [isDark, setIsDark] = useState(() => {
@@ -180,7 +184,7 @@ function App() {
   // Auto-scroll
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, isLoading]);
+  }, [messages, isLoading, streamingText, streamingSteps]);
 
   // Streaming / Typewriter Effect for Explanation
   useEffect(() => {
@@ -281,6 +285,10 @@ function App() {
     setSelectedQueryId(null);
     setActiveError(null);
     setActiveClarification(null);
+    setStreamingSteps([]);
+    setCurrentStep(null);
+    setStreamingText('');
+    setStreamingSql('');
   };
 
   const submitQuery = async (queryText) => {
@@ -291,60 +299,179 @@ function App() {
     setMessages(prev => [...prev, { id: userMsgId, type: 'user', content: queryText }]);
     setIsLoading(true);
     setActiveError(null);
+    setStreamingSteps([]);
+    setCurrentStep(null);
+    setStreamingText('');
+    setStreamingSql('');
 
     try {
       const apiBase = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:8000' : '');
-      const response = await fetch(`${apiBase}/api/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: queryText, thread_id: threadId })
-      });
+      
+      let streamSucceeded = false;
+      try {
+        const response = await fetch(`${apiBase}/api/chat/stream`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: queryText, thread_id: threadId })
+        });
 
-      const data = await response.json();
+        if (response.ok && response.body) {
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder('utf-8');
+          let buffer = '';
+          let receivedFinalResult = null;
+          let accumulatedText = '';
 
-      if (data.error) {
-        setMessages(prev => [
-          ...prev,
-          { id: Date.now(), type: 'agent', error: true, content: data.error }
-        ]);
-        setActiveError(data.error);
-        setActiveClarification(null);
-      } else if (data.clarification) {
-        setMessages(prev => [
-          ...prev,
-          {
-            id: Date.now() + 1,
-            type: 'agent',
-            isClarification: true,
-            content: data.clarification
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const parts = buffer.split('\n\n');
+            buffer = parts.pop() || '';
+
+            for (const part of parts) {
+              const lines = part.split('\n');
+              for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                  try {
+                    const data = JSON.parse(line.slice(6));
+                    if (data.event === 'step') {
+                      setCurrentStep(data);
+                      setStreamingSteps(prev => {
+                        const idx = prev.findIndex(s => s.node === data.node);
+                        if (idx >= 0) {
+                          const updated = [...prev];
+                          updated[idx] = { ...updated[idx], ...data };
+                          return updated;
+                        }
+                        return [...prev, data];
+                      });
+                      if (data.sql) {
+                        setStreamingSql(data.sql);
+                      }
+                    } else if (data.event === 'token') {
+                      accumulatedText += data.delta;
+                      setStreamingText(accumulatedText);
+                    } else if (data.event === 'result') {
+                      receivedFinalResult = data.data;
+                    } else if (data.event === 'error') {
+                      throw new Error(data.error);
+                    }
+                  } catch (parseErr) {
+                    console.error('SSE parse error:', parseErr);
+                  }
+                }
+              }
+            }
           }
-        ]);
-        setActiveClarification(data.clarification);
-        setActiveError(null);
-      } else {
-        setActiveClarification(null);
-        const queryRecord = {
-          id: Date.now(),
-          userPrompt: queryText,
-          sql: data.sql || '',
-          explanation: data.explanation || '',
-          results: parseResults(data.results),
-          executionTimeMs: data.execution_time_ms !== undefined ? data.execution_time_ms : null,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-        };
-        setQueriesList(prev => [...prev, queryRecord]);
-        setSelectedQueryId(queryRecord.id);
 
-        setMessages(prev => [
-          ...prev,
-          {
-            id: Date.now() + 1,
-            type: 'agent',
-            content: "Query generated and verified successfully. View the SQL, execution breakdown, and live results on the right.",
-            queryId: queryRecord.id,
-            sqlSnippet: data.sql ? data.sql.replace(/\s+/g, ' ').slice(0, 65) + (data.sql.length > 65 ? '...' : '') : ''
+          if (receivedFinalResult) {
+            streamSucceeded = true;
+            if (receivedFinalResult.error) {
+              setMessages(prev => [
+                ...prev,
+                { id: Date.now(), type: 'agent', error: true, content: receivedFinalResult.error }
+              ]);
+              setActiveError(receivedFinalResult.error);
+              setActiveClarification(null);
+            } else if (receivedFinalResult.clarification) {
+              setMessages(prev => [
+                ...prev,
+                {
+                  id: Date.now() + 1,
+                  type: 'agent',
+                  isClarification: true,
+                  content: receivedFinalResult.clarification
+                }
+              ]);
+              setActiveClarification(receivedFinalResult.clarification);
+              setActiveError(null);
+            } else {
+              setActiveClarification(null);
+              const queryRecord = {
+                id: Date.now(),
+                userPrompt: queryText,
+                sql: receivedFinalResult.sql || '',
+                explanation: receivedFinalResult.explanation || accumulatedText || '',
+                results: parseResults(receivedFinalResult.results),
+                executionTimeMs: receivedFinalResult.execution_time_ms !== undefined ? receivedFinalResult.execution_time_ms : null,
+                timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+              };
+              setQueriesList(prev => [...prev, queryRecord]);
+              setSelectedQueryId(queryRecord.id);
+
+              setMessages(prev => [
+                ...prev,
+                {
+                  id: Date.now() + 1,
+                  type: 'agent',
+                  content: receivedFinalResult.explanation || "Query generated and verified successfully. View the SQL, execution breakdown, and live results on the right.",
+                  queryId: queryRecord.id,
+                  sqlSnippet: receivedFinalResult.sql ? receivedFinalResult.sql.replace(/\s+/g, ' ').slice(0, 65) + (receivedFinalResult.sql.length > 65 ? '...' : '') : ''
+                }
+              ]);
+            }
           }
-        ]);
+        }
+      } catch (streamErr) {
+        console.warn('Streaming failed or was interrupted, falling back to non-streaming endpoint:', streamErr);
+      }
+
+      // Fallback to non-streaming /api/chat if streaming did not finish successfully
+      if (!streamSucceeded) {
+        const response = await fetch(`${apiBase}/api/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: queryText, thread_id: threadId })
+        });
+
+        const data = await response.json();
+
+        if (data.error) {
+          setMessages(prev => [
+            ...prev,
+            { id: Date.now(), type: 'agent', error: true, content: data.error }
+          ]);
+          setActiveError(data.error);
+          setActiveClarification(null);
+        } else if (data.clarification) {
+          setMessages(prev => [
+            ...prev,
+            {
+              id: Date.now() + 1,
+              type: 'agent',
+              isClarification: true,
+              content: data.clarification
+            }
+          ]);
+          setActiveClarification(data.clarification);
+          setActiveError(null);
+        } else {
+          setActiveClarification(null);
+          const queryRecord = {
+            id: Date.now(),
+            userPrompt: queryText,
+            sql: data.sql || '',
+            explanation: data.explanation || '',
+            results: parseResults(data.results),
+            executionTimeMs: data.execution_time_ms !== undefined ? data.execution_time_ms : null,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          };
+          setQueriesList(prev => [...prev, queryRecord]);
+          setSelectedQueryId(queryRecord.id);
+
+          setMessages(prev => [
+            ...prev,
+            {
+              id: Date.now() + 1,
+              type: 'agent',
+              content: data.explanation || "Query generated and verified successfully. View the SQL, execution breakdown, and live results on the right.",
+              queryId: queryRecord.id,
+              sqlSnippet: data.sql ? data.sql.replace(/\s+/g, ' ').slice(0, 65) + (data.sql.length > 65 ? '...' : '') : ''
+            }
+          ]);
+        }
       }
     } catch {
       const apiBase = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:8000' : '');
@@ -356,6 +483,10 @@ function App() {
       setActiveError(errMsg);
     } finally {
       setIsLoading(false);
+      setCurrentStep(null);
+      setStreamingSteps([]);
+      setStreamingText('');
+      setStreamingSql('');
     }
   };
 
@@ -525,15 +656,72 @@ function App() {
             ))}
 
             {isLoading && (
-              <div className="message-row row-agent">
-                <div className="avatar">🤖</div>
-                <div className="message-bubble bubble-agent typing-bubble">
-                  <span className="typing-label">Analyzing schema & compiling SQL...</span>
-                  <div className="typing-dots">
-                    <span className="dot"></span>
-                    <span className="dot"></span>
-                    <span className="dot"></span>
+              <div className="message-row row-agent streaming-agent-row">
+                <div className="avatar avatar-streaming">🤖</div>
+                <div className="message-bubble bubble-agent streaming-bubble">
+                  {/* Real-time Current Step Header */}
+                  <div className="streaming-status-header">
+                    <div className="streaming-badge">
+                      <span className="pulse-dot"></span>
+                      <span className="step-icon">{currentStep?.icon || '⚡'}</span>
+                      <span className="step-title">{currentStep?.title || 'Starting LangGraph agent...'}</span>
+                    </div>
+                    {currentStep?.execution_time_ms !== undefined && (
+                      <span className="step-timing">{currentStep.execution_time_ms}ms</span>
+                    )}
                   </div>
+
+                  {/* Step Description */}
+                  {currentStep?.description && (
+                    <div className="streaming-step-desc">
+                      {currentStep.description}
+                    </div>
+                  )}
+
+                  {/* Step Timeline / Stepper Pills */}
+                  {streamingSteps.length > 0 && (
+                    <div className="streaming-stepper">
+                      {streamingSteps.map((s, idx) => (
+                        <div
+                          key={s.node || idx}
+                          className={`step-chip ${s.node === currentStep?.node ? 'chip-active' : 'chip-done'}`}
+                          title={s.description}
+                        >
+                          <span className="chip-icon">{s.icon}</span>
+                          <span className="chip-text">{s.title}</span>
+                          {s.node === currentStep?.node ? (
+                            <span className="chip-spinner"></span>
+                          ) : (
+                            <span className="chip-check">✓</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Live SQL Preview if generated during workflow */}
+                  {streamingSql && (
+                    <div className="streaming-sql-preview">
+                      <div className="streaming-sql-header">
+                        <span>⚡ Generated SQL (Live AST)</span>
+                      </div>
+                      <pre><code>{streamingSql}</code></pre>
+                    </div>
+                  )}
+
+                  {/* Live Streamed Tokens */}
+                  {streamingText ? (
+                    <div className="streaming-text-stream">
+                      <span>{streamingText}</span>
+                      <span className="cursor-caret">▍</span>
+                    </div>
+                  ) : (
+                    <div className="typing-dots">
+                      <span className="dot"></span>
+                      <span className="dot"></span>
+                      <span className="dot"></span>
+                    </div>
+                  )}
                 </div>
               </div>
             )}

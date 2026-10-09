@@ -1,5 +1,6 @@
 import os
 import sys
+import json
 import unittest
 from fastapi.testclient import TestClient
 
@@ -177,7 +178,28 @@ class TestFastAPIChatEndpoint(unittest.TestCase):
         self.assertIsNotNone(data2.get("sql"), "Agent should generate SQL once clarification is provided")
         self.assertIn("Employees", data2.get("sql"))
         self.assertIn("Salary", data2.get("sql"))
+    def test_chat_stream_endpoint(self):
+        thread_id = "test-stream-suite"
+        with self.client.stream(
+            "POST",
+            "/api/chat/stream",
+            json={"message": "List customers in California", "thread_id": thread_id}
+        ) as response:
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("text/event-stream", response.headers.get("content-type", ""))
+            
+            events = []
+            for line in response.iter_lines():
+                if line and line.startswith("data: "):
+                    payload = json.loads(line[6:])
+                    events.append(payload.get("event"))
+
+            self.assertIn("step", events)
+            self.assertIn("token", events)
+            self.assertIn("result", events)
+            self.assertIn("done", events)
 
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
